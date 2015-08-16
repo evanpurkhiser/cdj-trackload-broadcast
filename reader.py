@@ -3,8 +3,11 @@
 import scapy.sendrecv
 import scapy.packet
 import scapy.all
-
 import collections
+import asyncore
+import socket
+import threading
+import optparse
 
 def hex2str(data): return ":".join("{:02x}".format(ord(c)) for c in data)
 
@@ -137,49 +140,91 @@ class TrackLoadStateMachine(object):
             return True
 
 
-data_parser   = CDJDataParser()
-state_machine = TrackLoadStateMachine()
+def get_track_load_details(packet_pair):
+    """Extracts track load details from a track-load packet
 
-def handlePacketData(data, packet):
-    """Extract track information on track load
+    The return of this method will include the CDJ identifier and the path of
+    the track that was loaded by this packet pair.
     """
-    packet_pair = data_parser.pair_packet(data)
+    cdj_id = ord(packet_pair.first[0].data[17])
 
-    if packet_pair is None:
-        return
+    path = packet_pair.second[5].data[36:].split('\x00\x00\x11')[0]
+    path = path.decode('utf-16-be').encode('utf-8')
 
-    debug_packet_pair(packet_pair)
-
-    if not state_machine.transition_packet(packet_pair):
-        return
-
-    if packet_pair.first[0].data[17:26] != '\x01\x08\x04\x01\x11\x00\x00\x00\x00':
-        return
-
-    text = packet_pair.second[5].data[36:].split('\x00\x00\x11')[0]
-    text = text.decode('utf-16-be').encode('utf-8')
-
-    print(text)
-    print('')
-
-    return
+    return (cdj_id, path)
 
 
-def handlePacket(packet):
-    """Extract the packet load and pass it into the packet state machine.
-    """
-    payload = packet['TCP'].payload
+if __name__ == '__main__':
+    data_parser   = CDJDataParser()
+    state_machine = TrackLoadStateMachine()
 
-    # Do not deal with padding packets
-    if isinstance(payload, scapy.packet.Padding):
-        return
+    parser = optparse.OptionParser()
+    parser.add_option('-a', '--addr', dest='addr', default='0.0.0.0')
+    parser.add_option('-p', '--port', dest='port', default=19000)
+    parser.add_option('-b', '--base-path', dest='base_path')
 
-    # Ensure the packet contains raw data
-    if not isinstance(payload, scapy.packet.Raw):
-        return
+    opts, args = parser.parse_args()
 
-    handlePacketData(payload.load, packet)
+    class Server(asyncore.dispatcher):
+        def __init__(self, host, port):
+            asyncore.dispatcher.__init__(self)
+            self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.set_reuse_addr()
+            self.bind((host, port))
+            self.listen(1)
+
+        def handle_accept(self):
+            pair = self.accept()
+            if pair is None:
+                return
+
+            sock, addr = pair
+            print('Incoming connection from {}'.format(repr(addr)))
+            self.connection = sock
+
+        def handle_close(self):
+            if self.connection: self.connection.close()
+
+        def send(self, message):
+            if self.connection: self.connection.send(message)
+
+    server = Server(opts.addr, opts.port)
+
+    socket_loop = threading.Thread(target=asyncore.loop, name="Asyncore Loop")
+    socket_loop.start()
+
+    def handle_packet(packet):
+        """Extract the packet load and pass it into the packet state machine.
+        """
+        payload = packet['TCP'].payload
+
+        # Do not deal with padding packets
+        if isinstance(payload, scapy.packet.Padding):
+            return
+
+        # Ensure the packet contains raw data
+        if not isinstance(payload, scapy.packet.Raw):
+            return
+
+        # Pair up CDJ packets
+        packet_pair = data_parser.pair_packet(payload.load)
+
+        if packet_pair is None:
+            return
+
+        # Look for track-load transition sequences
+        if not state_machine.transition_packet(packet_pair):
+            return
+
+        cdj_id, path = get_track_load_details(packet_pair)
+
+        # Remove the base path from the
+        if opts.base_path and path.startswith(opts.base_path):
+            path = path[len(opts.base_path):]
+
+        server.send('{:02d}:{}\n'.format(cdj_id, path))
 
 
-# Start sniffing CDJ <-> Rekordbox packets
-scapy.sendrecv.sniff(filter='tcp', prn=handlePacket)
+    # Start sniffing CDJ <-> Rekordbox packets
+    scapy.sendrecv.sniff(filter='tcp', prn=handle_packet)
+    asyncore.close_all()
