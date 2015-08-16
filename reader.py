@@ -105,25 +105,35 @@ class TrackLoadStateMachine(object):
     def __init__(self):
         self.state = 0
         self.command_states = [
-            '\x12\x14\x0f\x04', # Track load request
-            '\x30\x00\x0f\x06', # Track name request
-            '\x21\x02\x0f\x02', # (?) Unsure
-            '\x30\x00\x0f\x06', # Track data request (filename!)
+            lambda p: p[0].data[18:21] == '\x03\x04\x01',
+            '\x30\x00\x0f\x06',       # Begin track loading
+            '\x21\x02\x0f\x02',       # (?) Unsure
+            '\x30\x00\x0f\x06',       # Track data request (filename!)
         ]
 
     def transition_packet(self, packet_pair):
-        # Check if this command matches the expected transition
-        if packet_pair.first[0].command != self.command_states[self.state]:
-            self.state = 0
+        """Transition the machine via a packet
+        """
+        state_transition = self.command_states[self.state]
 
+        state_operation = state_transition
+
+        # If the state operation is a string assume that we want to verify that
+        # the command of the first part matches the configured state transition
+        if not hasattr(state_operation, '__call__'):
+            state_operation = lambda x: x[0].command == state_transition
+
+        # Check if this packet fufills the state operation
+        if not state_operation(packet_pair.first):
+            self.state = 0
             return
 
+        # Success, transition to the next state
         self.state += 1
 
         # Did we just transition into the last state?
         if self.state == len(self.command_states):
             self.state = 0
-
             return True
 
 
