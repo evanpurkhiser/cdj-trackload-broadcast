@@ -218,7 +218,7 @@ if __name__ == '__main__':
 
         cdj_id, path = get_track_load_details(packet_pair)
 
-        # Remove the base path from the
+        # Remove the base path from the 
         if opts.base_path and path.startswith(opts.base_path):
             path = path[len(opts.base_path):]
 
