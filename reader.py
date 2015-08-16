@@ -18,8 +18,18 @@ def debug_packet_pair(packet_pair):
     print('')
 
 
-PacketPair = collections.namedtuple('PacketPair',     ['identifier', 'first', 'second'])
-PacketPart = collections.namedtuple('CDJMessagePart', ['identifier', 'command', 'data'])
+# When the CDJs / Rekordbox talk to each other a packet is sent and the
+# opposite end will send a response. each packet includes an identifier
+# indicating which previous packet it is a response for. We can group these
+# together into a single object called a 'PacketPair'.
+#
+# PacketPairs `first` and `second` attributes are lists of PacketParts.
+PacketPair = collections.namedtuple('PacketPair', ['identifier', 'first', 'second'])
+
+# Each packet communicated to and from the CDJ contains multiple parts. Each
+# part is constructed of the packet identifier, a 'command' issued by the part,
+# and some data.
+PacketPart = collections.namedtuple('PacketPart', ['identifier', 'command', 'data'])
 
 # This header starts each "section" of a packet
 CDJ_SECTION_MARKER = '\x11\x87\x23\x49\xae\x11'
@@ -29,7 +39,11 @@ class CDJDataParser(object):
     """
     @staticmethod
     def parse_data(data):
-        """Parse a CDJ packet for it's identifier, command, and data
+        """Parse a CDJ packet into parts with the identifier, command, and data
+
+        This assumes that all packets will start with the `CDJ_SECTION_MARKER`,
+        otherwise the packet is not in communcation with the CDJ. Packets with
+        no parts will be ignored.
         """
         if data[:6] != CDJ_SECTION_MARKER:
             return
@@ -56,7 +70,12 @@ class CDJDataParser(object):
         self.initial_packets = {}
 
     def pair_packet(self, data):
-        parts = self.parse_data(data)
+        """Pair a TCP packet with the associated CDJ packet it belongs to
+
+        When a packet is paried to a previous packet with the same identifier
+        this method will return the PacketPair, returns None otherwise.
+        """
+        parts = CDJDataParser.parse_data(data)
 
         if parts is None:
             return
