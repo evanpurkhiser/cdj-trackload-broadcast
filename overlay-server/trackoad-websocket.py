@@ -86,15 +86,12 @@ if __name__ == '__main__':
     parser = optparse.OptionParser()
     parser.add_option('-m', '--music-path', dest='music_path')
 
-    parser.add_option('-a', '--websocket-addr', dest='ws_host', default='localhost')
-    parser.add_option('-p', '--websocket-port', dest='ws_port', default=8765)
-
-    parser.add_option('-b', '--broadcast-addr', dest='bc_host')
-    parser.add_option('-c', '--broadcast-port', dest='bc_port', default=19000)
+    parser.add_option('-s', '--broadcast-addr', dest='bc_host')
+    parser.add_option('-p', '--broadcast-port', dest='bc_port', default=19000)
 
     opts, _ = parser.parse_args()
 
-    ws_server  = (opts.ws_host, opts.ws_port)
+    ws_server  = ('localhost', 8008)
     bc_server  = (opts.bc_host, opts.bc_port)
 
     tracklistServer = TrackloadWebsocketServer(opts.music_path, ws_server, bc_server)
