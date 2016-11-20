@@ -8,6 +8,7 @@ import asyncore
 import socket
 import threading
 import optparse
+import os
 
 def hex2str(data): return ":".join("{:02x}".format(ord(c)) for c in data)
 
@@ -218,9 +219,8 @@ if __name__ == '__main__':
 
         cdj_id, path = get_track_load_details(packet_pair)
 
-        # Remove the base path from the 
-        if opts.base_path and path.startswith(opts.base_path):
-            path = path[len(opts.base_path):]
+        # Remove the base path from the track
+        path = os.path.relpath(path, opts.base_path)
 
         server.send('{:02d}:{}\n'.format(cdj_id, path))
 
