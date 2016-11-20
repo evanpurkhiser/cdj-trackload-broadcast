@@ -47,6 +47,9 @@ class TrackloadWebsocketServer(object):
 
             artwork = 'data:{mime};base64,{data}'.format(mime=mime, data=data)
 
+        release = track.getall('COMM')
+        if len(release) > 0: release = release[0].text
+
         return {
             'deck_id': int(deck_id),
             'artist':  track['TPE1'].text[0],
@@ -54,8 +57,8 @@ class TrackloadWebsocketServer(object):
             'album':   track['TALB'].text[0] if 'TALB' in track else None,
             'key':     track['TKEY'].text[0] if 'TKEY' in track else None,
             'label':   track['TPUB'].text[0] if 'TPUB' in track else None,
-            'release': track['COMM::XXX'].text[0] if 'COMM::XXX' in track else None,
             'year':    track['TDRC'].text[0].get_text() if 'TDRC' in track else None,
+            'release': release,
             'artwork': artwork,
         }
 
