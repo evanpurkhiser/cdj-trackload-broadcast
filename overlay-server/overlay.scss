@@ -1,0 +1,96 @@
+@import url("https://fonts.googleapis.com/css?family=Roboto:400,500,700");
+@import url("https://fonts.googleapis.com/css?family=Abel");
+
+* { box-sizing: border-box; }
+
+body {
+  margin:0;
+}
+
+.track-display {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.loaded-track {
+  display: inline-block;
+}
+
+// Align 2nd decks to the right
+.loaded-track:nth-child(2n+1) {
+  float: right;
+  text-align: right;
+
+  .artwork {
+    float: right;
+  }
+}
+
+.artwork {
+  border-radius: 5px;
+  height: 100px;
+  width: 100px;
+  overflow: hidden;
+  display: inline-block;
+
+  img {
+    height: 100%;
+  }
+
+  &.empty {
+    background: rgba(0, 0, 0, 0.5);
+
+    &:after {
+      content: 'Artwork Missing';
+      font: 21px Abel;
+      line-height: 20px;
+      text-align: center;
+      width: 100%;
+      margin: 30px 0;
+      display: block;
+      color: rgba(255, 255, 255, 0.8);
+    }
+  }
+}
+
+.details {
+  padding: 2px 10px;
+  display: inline-block;
+  vertical-align: top;
+  font-family: Roboto;
+  line-height: 20px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: bold;
+
+  .title, .artist {
+    font-size: 22px;
+    line-height: 28px;
+  }
+
+  %empty-field {
+    color: rgba(255, 255, 255, 0.75);
+    text-transform: uppercase;
+    font-size: 16px;
+  }
+
+  .album:empty:after {
+    @extend %empty-field;
+    content: 'Single release';
+  }
+
+  .label:empty:after {
+    @extend %empty-field;
+    content: 'Unsigned Track';
+  }
+
+  .catalog-num:not(:empty) {
+    padding-left: 6px;
+
+    &:before { content: '⌈'; }
+    &:after  { content: '⌋'; }
+  }
+}
