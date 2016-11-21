@@ -220,7 +220,8 @@ if __name__ == '__main__':
         cdj_id, path = get_track_load_details(packet_pair)
 
         # Remove the base path from the track
-        path = os.path.relpath(path, opts.base_path)
+        if opts.base_path is not None:
+            path = os.path.relpath(path, opts.base_path)
 
         server.send('{:02d}:{}\n'.format(cdj_id, path))
 
