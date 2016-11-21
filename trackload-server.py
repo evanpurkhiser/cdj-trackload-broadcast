@@ -1,14 +1,17 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import scapy.sendrecv
 import scapy.packet
 import scapy.all
 import collections
-import asyncore
-import socket
-import threading
 import optparse
 import os
+import mutagen
+import base64
+import websockets
+import asyncio
+import json
+import functools
 
 def hex2str(data): return ":".join("{:02x}".format(ord(c)) for c in data)
 
@@ -36,7 +39,7 @@ PacketPair = collections.namedtuple('PacketPair', ['identifier', 'first', 'secon
 PacketPart = collections.namedtuple('PacketPart', ['identifier', 'command', 'data'])
 
 # This header starts each "section" of a packet
-CDJ_SECTION_MARKER = '\x11\x87\x23\x49\xae\x11'
+CDJ_SECTION_MARKER = b'\x11\x87\x23\x49\xae\x11'
 
 class CDJDataParser(object):
     """Reads packets from the CDJs and pairs them two at a time.
@@ -109,10 +112,10 @@ class TrackLoadStateMachine(object):
     def __init__(self):
         self.state = 0
         self.command_states = [
-            lambda p: p[0].data[18:21] == '\x03\x04\x01',
-            '\x30\x00\x0f\x06',       # Begin track loading
-            '\x21\x02\x0f\x02',       # (?) Unsure
-            '\x30\x00\x0f\x06',       # Track data request (filename!)
+            lambda p: p[0].data[18:21] == b'\x03\x04\x01',
+            b'\x30\x00\x0f\x06',       # Begin track loading
+            b'\x21\x02\x0f\x02',       # (?) Unsure
+            b'\x30\x00\x0f\x06',       # Track data request (filename!)
         ]
 
     def transition_packet(self, packet_pair):
@@ -147,12 +150,43 @@ def get_track_load_details(packet_pair):
     The return of this method will include the CDJ identifier and the path of
     the track that was loaded by this packet pair.
     """
-    cdj_id = ord(packet_pair.first[0].data[17])
+    cdj_id = packet_pair.first[0].data[17]
 
-    path = packet_pair.second[5].data[36:].split('\x00\x00\x11')[0]
-    path = path.decode('utf-16-be').encode('utf-8')
+    path = packet_pair.second[5].data[36:].split(b'\x00\x00\x11')[0]
+    path = path.decode('utf-16-be').encode('utf-8').rstrip()
 
     return (cdj_id, path)
+
+
+def get_track_metadata(cdj_id, path):
+    """Construct metadata from the ID3 tags of the file.
+    """
+    track = mutagen.File(path).tags
+
+    # Convert the artwork into base 64
+    art = track.getall('APIC')
+    artwork = None
+
+    if len(art) > 0:
+        data = base64.b64encode(art[0].data).decode('utf-8')
+        mime = art[0].mime
+
+        artwork = 'data:{mime};base64,{data}'.format(mime=mime, data=data)
+
+    release = track.getall('COMM')
+    if len(release) > 0: release = release[0].text
+
+    return {
+        'deck_id': cdj_id,
+        'artist':  track['TPE1'].text[0],
+        'title':   track['TIT2'].text[0],
+        'album':   track['TALB'].text[0] if 'TALB' in track else None,
+        'key':     track['TKEY'].text[0] if 'TKEY' in track else None,
+        'label':   track['TPUB'].text[0] if 'TPUB' in track else None,
+        'year':    track['TDRC'].text[0].get_text() if 'TDRC' in track else None,
+        'release': release,
+        'artwork': artwork,
+    }
 
 
 if __name__ == '__main__':
@@ -161,38 +195,29 @@ if __name__ == '__main__':
 
     parser = optparse.OptionParser()
     parser.add_option('-a', '--addr', dest='addr', default='0.0.0.0')
-    parser.add_option('-p', '--port', dest='port', default=19000)
-    parser.add_option('-b', '--base-path', dest='base_path')
+    parser.add_option('-p', '--port', dest='port', default=8008)
 
     opts, args = parser.parse_args()
 
-    class Server(asyncore.dispatcher):
-        def __init__(self, host, port):
-            asyncore.dispatcher.__init__(self)
-            self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.set_reuse_addr()
-            self.bind((host, port))
-            self.listen(1)
+    loop = asyncio.get_event_loop()
+    client_queues = []
 
-        def handle_accept(self):
-            pair = self.accept()
-            if pair is None:
-                return
+    async def handle_websocket(websocket, path):
+        """Handle an opened websocket connection.
+        """
+        data_queue = asyncio.Queue(loop=loop)
+        client_queues.append(data_queue)
 
-            sock, addr = pair
-            print('Incoming connection from {}'.format(repr(addr)))
-            self.connection = sock
+        while True:
+            data = await data_queue.get()
+            await websocket.send(data)
 
-        def handle_close(self):
-            if self.connection: self.connection.close()
 
-        def send(self, message):
-            if self.connection: self.connection.send(message)
+    def broadcast_trackload(metadata):
+        """Broadcast metadata to all client queues to be sent.
+        """
+        for q in client_queues: q.put_nowait(metadata)
 
-    server = Server(opts.addr, opts.port)
-
-    socket_loop = threading.Thread(target=asyncore.loop, name="Asyncore Loop")
-    socket_loop.start()
 
     def handle_packet(packet):
         """Extract the packet load and pass it into the packet state machine.
@@ -218,14 +243,16 @@ if __name__ == '__main__':
             return
 
         cdj_id, path = get_track_load_details(packet_pair)
+        metadata = json.dumps(get_track_metadata(cdj_id, path))
 
-        # Remove the base path from the track
-        if opts.base_path is not None:
-            path = os.path.relpath(path, opts.base_path)
-
-        server.send('{:02d}:{}\n'.format(cdj_id, path))
+        # Send metadata to websockets
+        loop.call_soon_threadsafe(broadcast_trackload, metadata)
 
 
-    # Start sniffing CDJ <-> Rekordbox packets
-    scapy.sendrecv.sniff(filter='tcp', prn=handle_packet)
-    asyncore.close_all()
+    # Setup websocket server and CDJ packet sniffer
+    server  = websockets.serve(handle_websocket, opts.addr, opts.port)
+    sniffer = functools.partial(scapy.sendrecv.sniff, filter='tcp', prn=handle_packet)
+
+    loop.run_until_complete(server)
+    loop.run_in_executor(None, sniffer)
+    loop.run_forever()
